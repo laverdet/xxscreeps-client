@@ -5,25 +5,31 @@ import Router from 'koa-router';
 import JSZip from 'jszip';
 import { promises as fs } from 'fs';
 import { pathToFileURL } from 'url';
+import { Transform } from 'stream';
 import { Strategy as SteamStrategy } from 'passport-steam';
 import { registerBackendMiddleware } from 'xxscreeps/backend';
 import * as User from 'xxscreeps/engine/db/user';
 
 // Locate and read `package.nw`
-const data = await async function() {
+const { data, stat } = await async function() {
 	const fragment =
 		process.platform === 'win32' ? 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Screeps\\package.nw' :
 		process.platform === 'darwin' ? './Library/Application Support/Steam/steamapps/common/Screeps/package.nw' : undefined;
 	if (fragment) {
 		const path = new URL(fragment, `${pathToFileURL(os.homedir())}/`);
 		try {
-			return await fs.readFile(path);
+			const [ data, stat ] = await Promise.all([
+				 fs.readFile(path),
+				fs.stat(path),
+			]);
+			return { data, stat };
 		} catch (err) {
 			console.error(`Could not read: ${path}`);
 		}
 	} else {
 		console.error(`Unknown platform ${process.platform}. Please locate your \`package.nw\` file and tell the author where it is`);
 	}
+	return {};
 }();
 
 if (data) {
@@ -31,6 +37,8 @@ if (data) {
 	const zip = new JSZip;
 	await zip.loadAsync(data);
 	const { files } = zip;
+	// HTTP header is only accurate to the minute
+	const lastModified = Math.floor(+stat!.mtime / 60000) * 60000;
 
 	registerBackendMiddleware((koa, router) => {
 		// Grab hostname for use in Passport
@@ -49,6 +57,13 @@ if (data) {
 			if (!file) {
 				return next();
 			}
+
+			// Check cached response based on zip file modification
+			if (+new Date(context.request.headers['if-modified-since']!) >= lastModified) {
+				context.status = 304;
+				return;
+			}
+
 			context.body = await async function() {
 				if (path === 'index.html') {
 					let body = await file.async('text');
@@ -102,10 +117,17 @@ if (data) {
 				} else if (path === 'build.min.js') {
 					// Replace official CDN with local assets
 					const content = await file.async('text');
-					return content.replace(/https:\/\/d3os7yery2usni\.cloudfront\.net\//g, '\/assets\/');
+					return content.replace(/https:\/\/d3os7yery2usni\.cloudfront\.net\//g, '/assets/');
 				} else {
-					// Send everything else back unmodified
-					return file.nodeStream();
+					// JSZip doesn't implement their read stream correctly and it causes EPIPE crashes. Pass it
+					// through a no-op transform stream first to iron that out.
+					const stream = new Transform;
+					stream._transform = function(chunk, encoding, done) {
+						this.push(chunk, encoding);
+						done();
+					};
+					file.nodeStream().pipe(stream);
+					return stream;
 				}
 			}();
 
@@ -121,6 +143,12 @@ if (data) {
 				'.woff': 'font/woff',
 				'.woff2': 'font/woff2',
 			}[/\.[^.]+$/.exec(path.toLowerCase())?.[0] ?? '.html']!);
+
+			// We can safely cache explicitly-versioned resources forever
+			if (context.request.query.bust) {
+				context.set('Cache-Control', 'public,max-age=31536000,immutable');
+			}
+			context.set('Last-Modified', `${new Date(lastModified)}`);
 
 			// Don't send any auth tokens for these requests
 			context.state.token = false;
