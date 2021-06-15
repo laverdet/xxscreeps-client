@@ -3,12 +3,13 @@ import passport from 'koa-passport';
 import os from 'os';
 import Router from 'koa-router';
 import JSZip from 'jszip';
+import * as Crypto from 'crypto';
+import * as User from 'xxscreeps/engine/db/user';
 import { promises as fs } from 'fs';
 import { pathToFileURL } from 'url';
 import { Transform } from 'stream';
 import { Strategy as SteamStrategy } from 'passport-steam';
 import { registerBackendMiddleware } from 'xxscreeps/backend';
-import * as User from 'xxscreeps/engine/db/user';
 
 // Locate and read `package.nw`
 const { data, stat } = await async function() {
@@ -90,6 +91,12 @@ if (data) {
 				}
 			}, 1000);
 		})();
+		addEventListener('beforeunload', () => {
+			if (localStorage.auth === 'null') {
+				document.cookie = 'id=';
+				document.cookie = 'session=';
+			}
+		});
 					</script>` + header);
 					// Remove tracking pixels
 					body = body.replace(/<script[^>]*>[^>]*xsolla[^>]*<\/script>/g, '');
@@ -154,6 +161,26 @@ if (data) {
 			context.state.token = false;
 		});
 
+		// Authenticate from cookie
+		koa.use(async(context, next) => {
+			try {
+				if (context.state.userId) {
+					return await next();
+				}
+			} catch (err) {}
+			const id = context.cookies.get('id');
+			if (id) {
+				const sessionId = await context.db.data.hget(User.infoKey(id), 'session');
+				if (context.cookies.get('session') === sessionId) {
+					context.state.userId = id;
+				} else {
+					context.cookies.set('id');
+					context.cookies.set('session');
+				}
+			}
+			return next();
+		});
+
 		// Set up passport
 		passport.use('steam', new SteamStrategy({
 			apiKey: config.backend.steamApiKey,
@@ -177,8 +204,15 @@ if (data) {
 			const { userId } = context.state;
 			const username = await async function() {
 				if (userId !== undefined) {
-					const user = await context.db.data.hget(User.infoKey(userId), 'username');
-					return user.username;
+					const key = User.infoKey(userId);
+					const sessionId = Crypto.randomBytes(16).toString('hex');
+					const [ username ] = await Promise.all([
+						context.db.data.hget(key, 'username'),
+						context.db.data.hset(key, 'session', sessionId),
+					]);
+					context.cookies.set('id', userId, { httpOnly: false });
+					context.cookies.set('session', sessionId, { httpOnly: false });
+					return username;
 				}
 			}();
 			const json = JSON.stringify(JSON.stringify({ steamid, token, username }));
@@ -186,6 +220,7 @@ if (data) {
 				opener.postMessage(${json}, '*');
 				setTimeout(() => {
 					opener.location.replace("/#!/map/shard0");
+					opener.location.reload();
 					window.close();
 				}, 100);
 			</script></body>`;
