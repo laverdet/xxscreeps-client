@@ -1,3 +1,4 @@
+import type { Schema } from './config';
 import config from 'xxscreeps/config';
 import passport from 'koa-passport';
 import os from 'os';
@@ -6,29 +7,28 @@ import JSZip from 'jszip';
 import * as Crypto from 'crypto';
 import * as User from 'xxscreeps/engine/db/user';
 import { promises as fs } from 'fs';
-import { pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { Transform } from 'stream';
 import { Strategy as SteamStrategy } from 'passport-steam';
-import { registerBackendMiddleware } from 'xxscreeps/backend';
+import { hooks } from 'xxscreeps/backend';
 
 // Locate and read `package.nw`
 const { data, stat } = await async function() {
 	const fragment =
-		process.platform === 'win32' ? 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Screeps\\package.nw' :
-		process.platform === 'darwin' ? './Library/Application Support/Steam/steamapps/common/Screeps/package.nw' : undefined;
-	if (fragment) {
-		const path = new URL(fragment, `${pathToFileURL(os.homedir())}/`);
-		try {
-			const [ data, stat ] = await Promise.all([
-				 fs.readFile(path),
-				fs.stat(path),
-			]);
-			return { data, stat };
-		} catch (err) {
-			console.error(`Could not read: ${path}`);
-		}
-	} else {
-		console.error(`Unknown platform ${process.platform}. Please locate your \`package.nw\` file and tell the author where it is`);
+		(config as Schema).browserClient?.package ??
+		(process.platform === 'win32' ? 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Screeps\\package.nw' :
+		process.platform === 'darwin' ? './Library/Application Support/Steam/steamapps/common/Screeps/package.nw' : 'package.nw');
+	const path = new URL(fragment, `${pathToFileURL(os.homedir())}/`);
+	try {
+		const [ data, stat ] = await Promise.all([
+			fs.readFile(path),
+			fs.stat(path),
+		]);
+		return { data, stat };
+	} catch (err) {
+		console.error(
+			`@xxscreeps/client error: Could not read \`${fileURLToPath(path)}\`. ` +
+			'Please set `browserClient.package` in `.screepsrc.yaml` to the full path of your package.nw file');
 	}
 	return {};
 }();
@@ -41,7 +41,7 @@ if (data) {
 	// HTTP header is only accurate to the minute
 	const lastModified = Math.floor(+stat!.mtime / 60000) * 60000;
 
-	registerBackendMiddleware((koa, router) => {
+	hooks.register('middleware', (koa, router) => {
 		// Grab hostname for use in Passport
 		let host: string | undefined;
 		koa.use((context, next) => {

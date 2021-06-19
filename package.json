@@ -1,7 +1,7 @@
 {
   "name": "@xxscreeps/client",
   "type": "module",
-  "version": "0.0.1",
+  "version": "0.0.5",
   "scripts": {
     "build": "tsc",
     "eslint": "eslint $(git ls-files '*.ts' '*.tsx')",

@@ -1,4 +1,4 @@
 import type { Manifest } from 'xxscreeps/config/mods';
 export const manifest: Manifest = {
-	provides: 'backend',
+	provides: [ 'backend', 'config' ],
 };
