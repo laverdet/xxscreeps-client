@@ -91,6 +91,15 @@ if (data) {
 				}
 			}, 1000);
 		})();
+		// The client will just fill this up with data until the application breaks.
+		if (localStorage['users.code.activeWorld']?.length > 1024 * 1024) {
+			try {
+				const code = JSON.parse(localStorage['users.code.activeWorld']);
+				localStorage['users.code.activeWorld'] = JSON.stringify(code.sort((left, right) => right.timestamp - left.timestamp).slice(0, 2))
+			} catch (err) {
+				delete localStorage['users.code.activeWorld']
+			}
+		}
 		addEventListener('beforeunload', () => {
 			if (localStorage.auth === 'null') {
 				document.cookie = 'id=';
