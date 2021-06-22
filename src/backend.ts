@@ -5,12 +5,46 @@ import os from 'os';
 import Router from 'koa-router';
 import JSZip from 'jszip';
 import * as Crypto from 'crypto';
+import * as OpenId from 'openid';
 import * as User from 'xxscreeps/engine/db/user';
+import { hooks } from 'xxscreeps/backend';
 import { promises as fs } from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { Transform } from 'stream';
 import { Strategy as SteamStrategy } from 'passport-steam';
-import { hooks } from 'xxscreeps/backend';
+const { RelyingParty } = (OpenId as never as Record<'default', typeof OpenId>).default;
+
+// Hack in dynamic host support for abandoned Steam OpenId module
+SteamStrategy.prototype.authenticate = function(authenticate) {
+	return function(this: any, ...args: any[]) {
+		const req = args[0];
+		this._relyingParty.update = function() {
+			this.returnUrl = `${new URL('/api/auth/steam/return', req.href)}`;
+			this.realm = req.origin;
+		};
+		return authenticate.apply(this, args);
+	};
+}(SteamStrategy.prototype.authenticate);
+
+declare module 'openid' {
+	interface RelyingParty {
+		update(): void;
+	}
+}
+
+RelyingParty.prototype.authenticate = function(authenticate): typeof authenticate {
+	return function(this: InstanceType<typeof RelyingParty>, ...args) {
+		this.update();
+		return authenticate.apply(this, args);
+	};
+}(RelyingParty.prototype.authenticate);
+
+RelyingParty.prototype.verifyAssertion = function(verifyAssertion): typeof verifyAssertion {
+	return function(this: InstanceType<typeof RelyingParty>, ...args) {
+		this.update();
+		return verifyAssertion.apply(this, args);
+	};
+}(RelyingParty.prototype.verifyAssertion);
 
 // Locate and read `package.nw`
 const { data, stat } = await async function() {
@@ -42,12 +76,6 @@ if (data) {
 	const lastModified = Math.floor(+stat!.mtime / 60000) * 60000;
 
 	hooks.register('middleware', (koa, router) => {
-		// Grab hostname for use in Passport
-		let host: string | undefined;
-		koa.use((context, next) => {
-			host = context.request.origin;
-			return next();
-		});
 
 		// Serve client assets directly from steam package
 		koa.use(async(context, next) => {
@@ -194,10 +222,7 @@ if (data) {
 		passport.use('steam', new SteamStrategy({
 			apiKey: config.backend.steamApiKey,
 			profile: false,
-			// Dynamic `returnURL` and `realm` provided by this awesome patch
-			// https://github.com/passport-next/passport-openid/pull/3#issuecomment-632860051
-			returnURL: () => `${host}/api/auth/steam/return`,
-			realm: () => host,
+			returnURL: 'http:///',
 		}, (identifier: string, profile: unknown, done: (err: null | Error, value?: string) => void) => {
 			const steamId = /https:\/\/steamcommunity.com\/openid\/id\/(?<id>[^/]+)/.exec(identifier)?.groups!.id;
 			done(null, steamId);

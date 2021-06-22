@@ -1,12 +1,11 @@
 {
   "name": "@xxscreeps/client",
-  "version": "0.0.5",
+  "version": "0.0.5a",
   "type": "module",
   "xxscreeps": true,
   "scripts": {
     "build": "tsc",
     "eslint": "eslint $(git ls-files '*.ts' '*.tsx')",
-    "postinstall": "patch-package",
     "watch": "tsc -w"
   },
   "exports": {
@@ -18,14 +17,15 @@
     "koa-passport": "^4.1.4",
     "koa-router": "^10.0.0",
     "passport-koa": "^1.0.1",
-    "passport-steam": "^1.0.15",
-    "patch-package": "^6.4.7"
+    "passport-steam": "^1.0.15"
   },
   "devDependencies": {
     "@laverdet/eslint-config": "github:laverdet/eslint-config#a12fa0a782425b584992fc937eb0db43642b560a",
     "@types/jszip": "^3.4.1",
     "@types/koa-passport": "^4.0.2",
     "@types/koa-router": "^7.4.2",
+    "@types/openid": "^2.0.1",
+    "@types/passport-steam": "^1.0.1",
     "typescript": "4.3.2"
   }
 }
