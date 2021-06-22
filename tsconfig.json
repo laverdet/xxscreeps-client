@@ -8,5 +8,5 @@
 			"xxscreeps/*": [ "../../node_modules/xxscreeps/src/*" ],
 		},
 	},
-	"include": [ "src" ],
+	"include": [ "src", "src/**.json" ],
 }
