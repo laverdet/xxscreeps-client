@@ -1,50 +1,12 @@
 import type { Schema } from './config';
 import config from 'xxscreeps/config';
-import passport from 'koa-passport';
 import os from 'os';
-import Router from 'koa-router';
 import JSZip from 'jszip';
-import * as Crypto from 'crypto';
-import * as OpenId from 'openid';
 import * as User from 'xxscreeps/engine/db/user';
 import { hooks } from 'xxscreeps/backend';
 import { promises as fs } from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { Transform } from 'stream';
-import { Strategy as SteamStrategy } from 'passport-steam';
-const { RelyingParty } = (OpenId as never as Record<'default', typeof OpenId>).default;
-
-// Hack in dynamic host support for abandoned Steam OpenId module
-SteamStrategy.prototype.authenticate = function(authenticate) {
-	return function(this: any, ...args: any[]) {
-		const req = args[0];
-		this._relyingParty.update = function() {
-			this.returnUrl = `${new URL('/api/auth/steam/return', req.href)}`;
-			this.realm = req.origin;
-		};
-		return authenticate.apply(this, args);
-	};
-}(SteamStrategy.prototype.authenticate);
-
-declare module 'openid' {
-	interface RelyingParty {
-		update(): void;
-	}
-}
-
-RelyingParty.prototype.authenticate = function(authenticate): typeof authenticate {
-	return function(this: InstanceType<typeof RelyingParty>, ...args) {
-		this.update();
-		return authenticate.apply(this, args);
-	};
-}(RelyingParty.prototype.authenticate);
-
-RelyingParty.prototype.verifyAssertion = function(verifyAssertion): typeof verifyAssertion {
-	return function(this: InstanceType<typeof RelyingParty>, ...args) {
-		this.update();
-		return verifyAssertion.apply(this, args);
-	};
-}(RelyingParty.prototype.verifyAssertion);
 
 // Locate and read `package.nw`
 const { data, stat } = await async function() {
@@ -75,7 +37,7 @@ if (data) {
 	// HTTP header is only accurate to the minute
 	const lastModified = Math.floor(+stat!.mtime / 60000) * 60000;
 
-	hooks.register('middleware', (koa, router) => {
+	hooks.register('middleware', koa => {
 
 		// Serve client assets directly from steam package
 		koa.use(async(context, next) => {
@@ -200,73 +162,24 @@ if (data) {
 
 		// Authenticate from cookie
 		koa.use(async(context, next) => {
-			try {
-				if (context.state.userId) {
-					return await next();
-				}
-			} catch (err) {}
-			const id = context.cookies.get('id');
-			if (id) {
-				const sessionId = await context.db.data.hget(User.infoKey(id), 'session');
-				if (context.cookies.get('session') === sessionId) {
-					context.state.userId = id;
-				} else {
-					context.cookies.set('id');
-					context.cookies.set('session');
+			const userId = function() {
+				try {
+					return context.state.userId;
+				} catch (err) {}
+			}();
+			if (!userId) {
+				const id = context.cookies.get('id');
+				if (id) {
+					const sessionId = await context.db.data.hget(User.infoKey(id), 'session');
+					if (context.cookies.get('session') === sessionId) {
+						context.state.userId = id;
+					} else {
+						context.cookies.set('id');
+						context.cookies.set('session');
+					}
 				}
 			}
 			return next();
 		});
-
-		// Set up passport
-		passport.use('steam', new SteamStrategy({
-			apiKey: config.backend.steamApiKey,
-			profile: false,
-			returnURL: 'http:///',
-		}, (identifier: string, profile: unknown, done: (err: null | Error, value?: string) => void) => {
-			const steamId = /https:\/\/steamcommunity.com\/openid\/id\/(?<id>[^/]+)/.exec(identifier)?.groups!.id;
-			done(null, steamId);
-		}));
-
-		// `/api/auth/steam` endpoints
-		const steam = new Router;
-		steam.get('/');
-		steam.all('/return', async context => {
-			const steamid = context.state.user;
-			await context.authenticateForProvider('steam', steamid);
-			const token = await context.flushToken();
-			const { userId } = context.state;
-			const username = await async function() {
-				if (userId !== undefined) {
-					const key = User.infoKey(userId);
-					const sessionId = Crypto.randomBytes(16).toString('hex');
-					const [ username ] = await Promise.all([
-						context.db.data.hget(key, 'username'),
-						context.db.data.hset(key, 'session', sessionId),
-					]);
-					context.cookies.set('id', userId, { httpOnly: false });
-					context.cookies.set('session', sessionId, { httpOnly: false });
-					return username;
-				}
-			}();
-			const json = JSON.stringify(JSON.stringify({ steamid, token, username }));
-			context.body = `<html><body><script type="text/javascript">
-				opener.postMessage(${json}, '*');
-				setTimeout(() => {
-					opener.location.replace("/#!/map/shard0");
-					opener.location.reload();
-					window.close();
-				}, 100);
-			</script></body>`;
-		});
-
-		// Plug steam router into koa backend
-		router.use('/api/auth/steam',
-			passport.initialize(),
-			passport.authenticate('steam', {
-				session: false,
-				failureRedirect: '/',
-			}),
-			steam.routes(), steam.allowedMethods());
 	});
 }
