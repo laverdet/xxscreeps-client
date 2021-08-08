@@ -10,22 +10,23 @@ import { Transform } from 'stream';
 
 // Locate and read `package.nw`
 const { data, stat } = await async function() {
-	const fragment =
-		(config as Schema).browserClient?.package ??
-		(process.platform === 'win32' ? 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Screeps\\package.nw' :
-		process.platform === 'darwin' ? './Library/Application Support/Steam/steamapps/common/Screeps/package.nw' : 'package.nw');
-	const path = new URL(fragment, `${pathToFileURL(os.homedir())}/`);
+	const path = (config as Schema).browserClient?.package ?? function() {
+		switch (process.platform) {
+			case 'darwin': return new URL('./Library/Application Support/Steam/steamapps/common/Screeps/package.nw', `${pathToFileURL(os.homedir())}/`);
+			case 'win32': return 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Screeps\\package.nw';
+			default: return new URL('./.steam/steam/SteamApps/common/Screeps/package.nw', `${pathToFileURL(os.homedir())}/`);
+		}
+	}();
 	try {
 		const [ data, stat ] = await Promise.all([
 			fs.readFile(path),
 			fs.stat(path),
 		]);
 		return { data, stat };
-	} catch (err) {
-		console.error(
-			`@xxscreeps/client error: Could not read \`${fileURLToPath(path)}\`. ` +
-			'Please set `browserClient.package` in `.screepsrc.yaml` to the full path of your package.nw file');
-	}
+	} catch (err) {}
+	console.error(
+		`@xxscreeps/client error: Could not read \`${fileURLToPath(path)}\`. ` +
+		'Please set `browserClient.package` in `.screepsrc.yaml` to the full path of your package.nw file');
 	return {};
 }();
 
