@@ -36,7 +36,7 @@ if (data) {
 	await zip.loadAsync(data);
 	const { files } = zip;
 	// HTTP header is only accurate to the minute
-	const lastModified = Math.floor(+stat!.mtime / 60000) * 60000;
+	const lastModified = stat!.mtime;
 
 	hooks.register('middleware', koa => {
 
@@ -51,8 +51,8 @@ if (data) {
 			}
 
 			// Check cached response based on zip file modification
-			if (+new Date(context.request.headers['if-modified-since']!) >= lastModified) {
-				context.status = 304;
+			context.lastModified = lastModified;
+			if (context.fresh) {
 				return;
 			}
 
@@ -91,15 +91,17 @@ if (data) {
 				delete localStorage['users.code.activeWorld']
 			}
 		}
-		addEventListener('beforeunload', () => {
-			if (localStorage.auth === 'null') {
-				document.cookie = 'id=';
-				document.cookie = 'session=';
-			}
+		// Send the user to map after login from /register
+		addEventListener('message', event => {
+			setTimeout(() => {
+				if (localStorage.auth && localStorage.auth !== '"guest"' && document.location.hash === '#!/register') {
+					document.location.hash = '#!/'
+				}
+			});
 		});
 					</script>` + header);
 					// Remove tracking pixels
-					body = body.replace(/<script[^>]*>[^>]*xsolla[^>]*<\/script>/g, '');
+					body = body.replace(/<script[^>]*>[^>]*xsolla[^>]*<\/script>/g, '<script>xnt = new Proxy(() => xnt, { get: () => xnt })</script>');
 					body = body.replace(/<script[^>]*>[^>]*facebook[^>]*<\/script>/g, '<script>fbq = new Proxy(() => fbq, { get: () => fbq })</script>');
 					body = body.replace(/<script[^>]*>[^>]*google[^>]*<\/script>/g, '<script>ga = new Proxy(() => ga, { get: () => ga })</script>');
 					body = body.replace(/<script[^>]*>[^>]*mxpnl[^>]*<\/script>/g, '<script>mixpanel = new Proxy(() => mixpanel, { get: () => mixpanel })</script>');
@@ -159,28 +161,6 @@ if (data) {
 
 			// Don't send any auth tokens for these requests
 			context.state.token = false;
-		});
-
-		// Authenticate from cookie
-		koa.use(async(context, next) => {
-			const userId = function() {
-				try {
-					return context.state.userId;
-				} catch (err) {}
-			}();
-			if (!userId) {
-				const id = context.cookies.get('id');
-				if (id) {
-					const sessionId = await context.db.data.hget(User.infoKey(id), 'session');
-					if (context.cookies.get('session') === sessionId) {
-						context.state.userId = id;
-					} else {
-						context.cookies.set('id');
-						context.cookies.set('session');
-					}
-				}
-			}
-			return next();
 		});
 	});
 }
