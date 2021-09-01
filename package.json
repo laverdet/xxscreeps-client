@@ -1,6 +1,6 @@
 {
   "name": "@xxscreeps/client",
-  "version": "0.0.5a",
+  "version": "0.0.6",
   "type": "module",
   "xxscreeps": true,
   "scripts": {
